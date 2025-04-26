@@ -1,0 +1,451 @@
+---
+title: "Problem Set 2"
+author: "Zheng Cui"
+format: pdf
+date: "3/03/2025"
+
+execute:
+  echo: true
+  message: false
+  warning: false
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup}
+rm(list = ls())
+library(haven)
+library(tidyverse)
+library(here)
+library(clubSandwich) 
+library(lmtest)
+library(zoo)
+library(systemfit)
+```
+
+# 1) UCTs vs. CCTs for boosting school enrollment
+
+```{r}
+d <- read_stata(here("ps1/morocco_for_analysis.dta")) |>
+  filter(eligible_child == 1)
+
+d |> select(household_id, indiv_id, wave, group, schoolid, enrolled) |>
+  arrange(schoolid, household_id, indiv_id, wave)
+
+```
+
+## a)
+
+```{r}
+
+d_pre <- d %>% filter(wave == 0)
+
+d_pre <- d_pre %>%
+  mutate(
+    treat_UCT = ifelse(group == 1, 1, 0),
+    treat_CCT = ifelse(group > 1, 1, 0)
+  )
+
+reg <- lm(lw_father ~ treat_UCT + treat_CCT, data = d_pre)
+
+vcov_clustered <- vcovCR(reg, cluster = d_pre$schoolid, type = "CR2")
+
+joint_test <- linearHypothesis(reg, 
+  hypothesis.matrix = c("treat_UCT = 0", "treat_CCT = 0"),
+  vcov. = vcov_clustered
+)
+
+print(joint_test)
+```
+
+## b)
+
+Yes, I did take cluster into account. This is because the treatment
+occurred at school level and thus all children from the same school
+received the same treatment.
+
+## c)
+
+### i) (1)
+
+Estimate the enrollment increases due to assignment to the UCT group and
+the CCT group. Are they statistically significant?
+
+```{r}
+d <- read_stata(here('ps1/morocco_for_analysis.dta')) %>%
+  filter(eligible_child == 1) %>%
+  mutate(assignment = case_when(
+    group > 1  ~ "cct",
+    group == 1 ~ "uct",
+    group == 0 ~ "control"
+  )) %>%
+  mutate(assignment = factor(assignment) %>% relevel(ref = "control"))
+
+d$cct <- as.numeric(d$assignment == "cct")
+d$uct <- as.numeric(d$assignment == "uct")
+
+d_ate <- d %>% filter(wave == 1)
+
+reg_combined <- lm(enrolled ~ assignment, data = d_ate)
+
+reg_combined_clustered <- vcovCR(reg_combined, cluster = d_ate$schoolid, type = "CR2")
+
+coeftest(reg_combined, vcov = reg_combined_clustered)
+
+linearHypothesis(reg_combined, 
+                 "assignmentcct = assignmentuct", 
+                 vcov. = reg_combined_clustered)
+```
+
+For UCT, we see a 8.2% increase. For CCT, we see a 6.6% increase. Both
+of these results are statistically significant.
+
+### ii) (1)
+
+Is the difference in enrollment effects between the UCT and CCT
+statistically significant at conventional levels (1%, 5%, 10%)?
+
+The p-value is 0.1151, which is above 10%, 5%, and 1% significance
+thresholds, not statistically significant at conventional levels 
+
+### d) (2)
+
+Refer to the research article on the *Tayssir* study on Canvas in
+"Files/problem_sets/ps1/Benhassine et al. - 2015 - Turning a shove into
+a nudge A labeled cash transfer for education.pdf". Based on the article
+and your analysis in the previous parts of this question, what do you
+conclude the study teaches us about the behavior of the Type II
+households we discussed in class in this context?
+
+Type II households are those who are on the edge of sending/not sending
+their kids to school. Having a cash transfer program will help them to
+send their children to school. Whether it is UCT or CCT does not matter
+much, making conditions (compliance, punishment) unnecessary and
+increasing overall project cost.
+
+# 2) UCTs and Labor Supply
+
+In this problem, we will look at the effect of providing the *Tayssir*
+cash transfer unconditionally on adults' working hours per week. We
+define adults as individuals aged 16 and up. The dataset is
+`Files/problem_sets/ps2/tayssir_labor_supply.dta` and has the same
+structure as `Files/problem_sets/ps1/morocco_for_analysis.dta`, with two
+waves, the same group definitions, etc.
+
+## a) (2)
+
+Refer to
+`Files/Banerjee et al Debunking the Stereotype of the Lazy Welfare Recipient.pdf`
+on Canvas. Draw a graph (you don't need to use R) similar to the ones we
+used to analyze enrollment responses, which shows that providing the
+unconditional cash transfer (UCT) could reduce adults' hours worked per
+week. Label $Y_{0i}$ and $Y_{1i}$.
+
+![](images/1.png)
+
+## b) (2)
+
+Draw a graph which shows that providing the UCT could keep adults' hours
+worked per week constant. Label $Y_{0i}$ and $Y_{1i}$.
+
+![](images/2.png)
+
+## c) (1)
+
+Draw a graph which shows that providing the UCT could increase adults'
+hours worked per week. Label $Y_{0i}$ and $Y_{1i}$. Hint: what argument
+do the authors give for this in the paper?
+
+One potential argument given by author is having extra income allow
+women to find child care and therefore able to join the workforce.
+
+![](images/3.png)
+
+## d) (1)
+
+What is Di for this causal question?
+
+Di is the treatment dummy indicator for being treated with the
+unconditional cash transfer program.
+
+## e)
+
+### i) (2)
+
+Why can't we calculate $Y_{1i} - Y_{0i}$ for any individual?
+
+For any given individual, we observe only one potential outcome of
+either Y1 or Y0. We can never see both outcomes for the same person at
+the same time.
+
+### ii) (2)
+
+Why does Benhassine et. al. (2015)'s strategy of randomly assigning
+household eligibility for the UCT mean we can identify
+$E[Y_{1i} - Y_{0i}]$?
+
+Because households are randomly assigned to be eligible for the UCT, the
+treatment and control groups are statistically equivalent in expectation
+on all pre-treatment characteristics. This means that any systematic
+difference in outcomes between the two groups can be attributed solely
+to the UCT. 
+
+## f)
+
+Filter so that you select the pre-treatment wave (`wave == 0`).
+
+```{r}
+rm(list = ls())
+d <- read_stata(here("ps2/tayssir_labor_supply.dta")) |>
+  filter(wave == 0)
+
+```
+
+### i) (2)
+
+Regress `hours_perweek` on an indicator variable for inclusion in the
+UCT treatment group and report the results.
+
+```{r}
+reg_pre <- lm(hours_perweek ~ control, data = d)
+
+vcov_pre <- vcovCR(reg_pre, cluster = d$schoolid, type = "CR2")
+
+coeftest(reg_pre, vcov = vcov_pre)
+```
+
+### ii) (1)
+
+Does the group assigned to the UCT differ in their pre-treatment hours
+of work per week compared to the control group in a statistically
+significant way, at conventional levels?
+
+The P-value is 0.9839, which is far above the conventional significance
+thresholds. There is no statistically significant difference in
+pre-treatment hours worked between the UCT group and the control group.
+
+## g) (2)
+
+What does the result from (b) tell us about whether the control group is
+made up of "good clones" of the individuals in the treatment group,
+according to the terminology in *Impact Evaluation in Practice* Chapter
+4?
+
+Because the difference in pre-treatment hours worked between the UCT and
+control groups is effectively zero (statistically insignificant), the
+control group appears to be a "good clone" of the treatment group---at
+least on this key outcome variable (hours worked). In *Impact Evaluation
+in Practice* Chapter 4 terminology, this indicates that random
+assignment achieved balance on pre-treatment characteristics, making the
+control group a valid counterfactual for the treatment group.
+
+## h) (2)
+
+Estimate the effect of the UCT on adults' hours worked.
+
+```{r}
+rm(list = ls())
+d <- read_stata(here("ps2/tayssir_labor_supply.dta")) |>
+  filter(wave == 1)
+
+reg_post <- lm(hours_perweek ~ control, data = d)
+vcov_post <- vcovCR(reg_post, cluster = d$schoolid, type = "CR2")
+
+coeftest(reg_post, vcov = vcov_post)
+
+```
+
+### i) (1)
+
+Is the effect significantly different from zero at conventional levels?
+
+No. With a p-value of 0.6013, we fail to reject the null hypothesis that
+the difference in hours worked (control vs. UCT) is zero. Hence, there
+is no statistically significant effect of the UCT on adults' hours
+worked at the 1%, 5%, or 10% level.
+
+## 
+
+**j) (3)**
+
+Comment on if/how the results from e), and others discussed in
+`Files/Banerjee et al Debunking the Stereotype of the Lazy Welfare Recipient.pdf`
+affect your opinion of unconditional cash transfers as a social welfare
+policy?
+
+I have previously studied UCT programs. The recreation of the Banerjee
+et al. paper suggested that unconditional cash transfers do not cause
+large reductions in labor supply. This is in line with the large
+quantity of academic discussion that unilaterally find no significant
+effect on work hours, partly because recipients use the transfers to
+cover basic needs or invest in productivity-enhancing activities. This
+validates the value of cash transfers as a social welfare policy. The
+stereotype of social welfare nets creating laziness is by far unfounded
+and much of a political statement than academic one.
+
+# 3. Capital Gains
+
+Refer to
+`Files/Fafchamps et al. - 2014 - Microenterprise growth and the flypaper effect Evidence from a randomized experiment in Ghana.pdf`
+for this question.
+
+## a) (2)
+
+What is the primary question that the authors are trying to answer? What
+makes it important from a policy perspective?
+
+The primary question is whether providing capital grants to small-scale
+entrepreneurs (microenterprises) increases their business profits, and
+whether how the grant is provided (cash vs. in-kind) affects outcomes.
+
+There are two major reasons from policy: 1) Policymakers need to know
+which form of assistance actually boosts business performance. If
+in-kind grants lead to higher profit growth, then designing programs
+that restrict recipients to use the grant on business inputs will be
+more effective than handing out cash. 2) Understanding the effect helps
+ensure that limited resources are used in ways that maximize economic
+growth and employment among microentrepreneurs.
+
+## b) (2)
+
+Explain the main finding of the paper (including what the 'flypaper
+effect' is) using non-technical jargon, as if you were writing a brief
+policy memo.
+
+The study finds that when small business owners receive a grant in the
+form of physical goods (in-kind), their profits increase significantly
+compared to when they receive the same amount as cash. In simple terms,
+the "flypaper effect" means that money given in kind tends to "stick"
+with the business whereas cash is more likely to be spent on other
+household or consumption needs.
+
+## c) (4)
+
+The authors used a randomized control trial because they believed an
+observational analysis of similar policies would be insufficient.
+Imagine that another country implemented the investment program without
+randomizing treatment, and that you were trying to understand the effect
+of this program on food security in that country. What are two possible
+confounders (omitted variables) that would bias the results from your
+observational analysis? For each confounder, explain in 2-3 sentences
+the mechanism of the omitted variable and [use the omitted variable bias
+formula]{.underline} to argue whether it would lead to an understatement
+or overstatement of the true effect.
+
+Factor 1): Geographical Location. People living in areas with better
+roads, markets, and stronger local information systems might find it
+easier to learn about and apply for a grant program. Alternately, better
+locations also gives lower transportation costs for inputs and higher
+selling prices for outputs. Using the OVB: Cov(D1, X)\>0 If participants
+are more likely to be in better locations. This leads to a positive bias
+(an overestimate). You would mistakenly attribute the benefit of good
+infrastructure to the program itself.
+
+Factor 2): Household Wealth. Households that start off wealthier are
+more likely to sign up (they can afford any upfront costs, are more
+aware of such programs, or meet eligibility criteria more
+easily). Cov(D1, X)\>0: If having more wealth makes it more likely to
+participate. This leads to an overstatement of the program's true
+effect. We'd erroneously assign to the grant the benefits that are
+actually due to participants' existing wealth.
+
+## d) (3)
+
+Let Y~0i~ be the business profits in the absence of the grants program
+and let D~i~ = 1 denote participation in the program. If there were no
+RCT and individuals were allowed to opt-in to the program, critics might
+point out that:
+
+$$ E[Y_{0i} | D_i = 1] < E[Y_{0i} | D_i = 0] $$Explain this equation in
+words, say explain why it is a problem, and give a plausible scenario in
+which the problem may occur
+
+This means that even if individuals who participate in the program did
+not receive the grant, they would still have lower business profits on
+average than people who do not participate. This shows that participants
+are systematically different (in this case, worse off to begin with)
+than non-participants. If we simply compare participants' outcomes to
+non-participants', we might incorrectly attribute differences in profits
+to the program rather than to underlying differences in their initial
+circumstances.
+
+A plausible scenario where this problem occurs is if the grant is
+targeted toward struggling enterprises or poorer households. Businesses
+performing poorly may be more motivated to enroll in a grant program,
+but they would have had low profits regardless of the program. 
+
+# 4) RCTs in your own work
+
+The goal of this question is to consider how RCTs can be applied to
+evaluate current policy questions interesting to you.
+
+## a) (2)
+
+Propose a specific policy question that could best be answered using an
+RCT. Explain the question in non-technical terms in no more than 3-5
+sentences. Write mathematically the regression you would run.
+
+Many governments are exploring ways to accelerate the adoption of
+low-carbon energy solutions and one way is to offer partial subsidies or
+carbon credits to households installing solar panels, thereby lowering
+the up-front cost.
+
+The question is: **Does providing such subsidies significantly increase
+solar panel adoption?**
+
+A simple way to estimate the program's effect is to regress an outcome
+Yi on the treatment indicator Di:
+
+$$Yi=\alpha+\beta Di+\epsilon_i$$
+
+Yi is the solar adoption (a binary indicator of whether household
+installed solar). Di is an indicator variable (1 if household i was
+offered the subsidy, 0 if not). Beta captures the causal effect of being
+offered the subsidy on the outcome of interest. ei is the error term
+capturing unobserved factors.
+
+## b) (1)
+
+Describe your treatment group. Propose a comparison group and explain in
+a short paragraph why you chose that group.
+
+**Treatment Group**
+
+Households randomly selected to receive the solar subsidy offer (or
+carbon credits tied to solar adoption). This group might also receive
+informational brochures or installation support.
+
+**Comparison (Control) Group**
+
+Similar households in the same area (matched on characteristics like
+income, energy consumption, home type) that do **not** receive the
+subsidy offer.
+
+**Why this group?**
+
+By selecting households with comparable baseline conditions yet
+withholding the subsidy from the control group, we ensure that any
+differences in solar adoption a can be attributed to the financial
+incentive rather than pre-existing disparities. This straightforward
+comparison allows us to cleanly isolate the impact of the subsidy on
+behavior.
+
+## c) (1)
+
+Is it possible that the control group could be "contaminated" as a
+result of interacting with the treatment group? Explain in a short
+paragraph which measures you would take to limit this contamination. (2
+points)
+
+Yes, there is a possibility that some control households might be
+influenced by the treatment group's activities---e.g., seeing neighbors
+install solar panels could motivate them to do so even without the
+financial incentive, or they might share equipment or knowledge.
+
+I can randomize at the neighborhood or community level so that entire
+blocks either receive or do not receive the subsidy offer. This reduces
+the likelihood of direct spillovers within closeby communities. I can
+also collect outcome data relatively soon after the subsidy offer to
+minimize the time for neighbors in the control group to imitate or learn
+secondhand.
